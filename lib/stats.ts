@@ -23,7 +23,10 @@ function baseUrl(game: GameConfig): string {
 
 async function getJson<T>(url: string, revalidate = 30): Promise<T | null> {
   try {
-    const res = await fetch(url, { next: { revalidate } })
+    const res = await fetch(url, {
+      next: { revalidate },
+      signal: AbortSignal.timeout(5000),
+    })
     if (!res.ok) return null
     return (await res.json()) as T
   } catch {
