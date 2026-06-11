@@ -6,16 +6,34 @@
 set -e
 cd "$(dirname "$0")/.."
 
-# ── 1. Build .env if missing or still has placeholder DATABASE_URL ────────────
+# ── DB defaults (match bfv-stats dev setup) ───────────────────────────────────
+CTF_DB="${CTF_DB:-captheflag}"
+CTF_USER="${CTF_USER:-captheflag_user}"
+CTF_PASS="${CTF_PASS:-devpassword}"
+
+# ── 1. Create Postgres user + database (idempotent) ───────────────────────────
+echo ""
+echo "==> Creating PostgreSQL user '${CTF_USER}' and database '${CTF_DB}'"
+sudo -u postgres psql <<SQL
+DO \$\$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${CTF_USER}') THEN
+    CREATE USER ${CTF_USER} WITH PASSWORD '${CTF_PASS}';
+  END IF;
+END \$\$;
+ALTER USER ${CTF_USER} WITH PASSWORD '${CTF_PASS}';
+SELECT 'CREATE DATABASE ${CTF_DB} OWNER ${CTF_USER}'
+  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${CTF_DB}')\gexec
+GRANT ALL PRIVILEGES ON DATABASE ${CTF_DB} TO ${CTF_USER};
+SQL
+sudo -u postgres psql -d "${CTF_DB}" -c "GRANT ALL ON SCHEMA public TO ${CTF_USER};"
+echo "    PostgreSQL ready."
+
+# ── 2. Build .env if missing or still has placeholder DATABASE_URL ────────────
 if [ ! -f .env ] || grep -q 'username:password' .env 2>/dev/null; then
   echo ""
   echo "==> Setting up .env"
 
-  read -rp "DATABASE_URL (e.g. postgresql://user:pass@localhost:5432/captheflag): " DB_URL
-  if [ -z "$DB_URL" ]; then
-    echo "ERROR: DATABASE_URL is required." >&2
-    exit 1
-  fi
+  DB_URL="postgresql://${CTF_USER}:${CTF_PASS}@localhost:5432/${CTF_DB}"
 
   JWT=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))" 2>/dev/null \
         || openssl rand -hex 48)
@@ -40,24 +58,22 @@ EOF
   echo "    .env written."
 else
   echo "==> .env already exists, leaving it alone."
-  # Make sure the stats URLs are present
   grep -q BFV_STATS_URL .env    || echo 'BFV_STATS_URL="http://127.0.0.1:8001"'    >> .env
   grep -q BF1942_STATS_URL .env || echo 'BF1942_STATS_URL="http://127.0.0.1:8000"' >> .env
 fi
 
-# ── 2. Install dependencies ───────────────────────────────────────────────────
+# ── 3. Install dependencies ───────────────────────────────────────────────────
 echo ""
 echo "==> npm install"
 npm install
 
-# ── 3. Database setup ─────────────────────────────────────────────────────────
+# ── 4. Database schema + seed ─────────────────────────────────────────────────
 echo ""
 echo "==> Generating Prisma client"
 npm run db:generate
 
 echo ""
 echo "==> Creating tables (idempotent)"
-# Load DATABASE_URL from .env for psql
 export $(grep -E '^DATABASE_URL=' .env | head -1 | xargs)
 psql "$DATABASE_URL" -f scripts/create-tables.sql
 
@@ -65,7 +81,7 @@ echo ""
 echo "==> Seeding default admin user and pages"
 npm run db:seed
 
-# ── 4. Verify BFV stats engine is reachable ───────────────────────────────────
+# ── 5. Verify BFV stats engine is reachable ───────────────────────────────────
 echo ""
 echo "==> Checking BFV stats engine at :8001 ..."
 if curl -sf http://127.0.0.1:8001/api/v1/health > /dev/null 2>&1; then
@@ -74,7 +90,7 @@ else
   echo "    WARNING: BFV engine not responding on :8001 — stats sections will show empty state."
 fi
 
-# ── 5. Start dev server ───────────────────────────────────────────────────────
+# ── 6. Start dev server ───────────────────────────────────────────────────────
 echo ""
 echo "==> Starting dev server on http://localhost:3001"
 echo "    (Ctrl-C to stop)"
