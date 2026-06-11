@@ -84,7 +84,7 @@ npm run db:seed
 # ── 5. Verify BFV stats engine is reachable ───────────────────────────────────
 echo ""
 echo "==> Checking BFV stats engine at :8001 ..."
-if curl -sf http://127.0.0.1:8001/api/v1/health > /dev/null 2>&1; then
+if curl -sf --max-time 5 http://127.0.0.1:8001/api/v1/health > /dev/null 2>&1; then
   echo "    OK — BFV engine is up."
 else
   echo "    WARNING: BFV engine not responding on :8001 — stats sections will show empty state."
